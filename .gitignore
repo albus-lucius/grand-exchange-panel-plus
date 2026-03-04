@@ -1,0 +1,20 @@
+# Build
+.gradle/
+build/
+out/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Dev-only (not needed in published repo)
+CLAUDE.md
+run-dev.bat
+run-*.bat
+hotswap-agent.properties
+gradle.properties
+log.log
+.runelite/
+nul
+NUL
