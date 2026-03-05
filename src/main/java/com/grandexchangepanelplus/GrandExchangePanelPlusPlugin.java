@@ -2,8 +2,6 @@ package com.grandexchangepanelplus;
 
 import java.awt.Rectangle;
 import java.awt.event.MouseEvent;
-import java.util.LinkedList;
-import java.util.Queue;
 import javax.inject.Inject;
 import com.google.inject.Provides;
 import lombok.extern.slf4j.Slf4j;
@@ -21,7 +19,7 @@ import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.ui.overlay.OverlayManager;
 
 @Slf4j
-@PluginDescriptor(name = "01 Grand Exchange Panel Plus")
+@PluginDescriptor(name = "Grand Exchange Buttons")
 public class GrandExchangePanelPlusPlugin extends Plugin implements MouseListener
 {
 	private static final int GE_OFFERS_INTERFACE = 465;
@@ -49,7 +47,6 @@ public class GrandExchangePanelPlusPlugin extends Plugin implements MouseListene
 
 	private int pendingCollectSlot = -1;
 	private int collectTicksWaited;
-	private String lastWidgetTree = "";
 	volatile boolean suppressButtons = false;
 
 	@Provides
@@ -63,7 +60,7 @@ public class GrandExchangePanelPlusPlugin extends Plugin implements MouseListene
 	{
 		overlayManager.add(overlay);
 		mouseManager.registerMouseListener(this);
-		log.info("Grand Exchange Panel Plus started");
+		log.info("Grand Exchange Buttons started");
 	}
 
 	@Override
@@ -72,7 +69,7 @@ public class GrandExchangePanelPlusPlugin extends Plugin implements MouseListene
 		overlayManager.remove(overlay);
 		mouseManager.unregisterMouseListener(this);
 		pendingCollectSlot = -1;
-		log.info("Grand Exchange Panel Plus stopped");
+		log.info("Grand Exchange Buttons stopped");
 	}
 
 	@Override
@@ -98,7 +95,7 @@ public class GrandExchangePanelPlusPlugin extends Plugin implements MouseListene
 				if (modBounds != null && modBounds.contains(e.getPoint()))
 				{
 					suppressButtons = true;
-				invokeSlotAction(slot, "Modify");
+					invokeSlotAction(slot, "Modify");
 					e.consume();
 					return e;
 				}
@@ -110,7 +107,7 @@ public class GrandExchangePanelPlusPlugin extends Plugin implements MouseListene
 				if (abortBounds != null && abortBounds.contains(e.getPoint()))
 				{
 					suppressButtons = true;
-				invokeSlotAction(slot, "Abort");
+					invokeSlotAction(slot, "Abort");
 					e.consume();
 					return e;
 				}
@@ -165,42 +162,6 @@ public class GrandExchangePanelPlusPlugin extends Plugin implements MouseListene
 	@Subscribe
 	public void onGameTick(GameTick tick)
 	{
-		// Log widget tree on change (only when GE is open)
-		if (config.showDebug() && client.getWidget(GE_OFFERS_INTERFACE, 0) != null)
-		{
-			StringBuilder sb = new StringBuilder();
-			Queue<Widget> queue = new LinkedList<>();
-			Widget[] roots = client.getWidgetRoots();
-			if (roots != null)
-			{
-				for (Widget r : roots) if (r != null) queue.add(r);
-			}
-			while (!queue.isEmpty())
-			{
-				Widget w = queue.poll();
-				if (w == null || w.isHidden()) continue;
-				int gid = w.getId() >> 16;
-				int cid = w.getId() & 0xFFFF;
-				String t = w.getText();
-				if (t != null && !t.isEmpty())
-				{
-					sb.append(gid).append(":").append(cid).append("[").append(t).append("] ");
-				}
-				Widget[] sc = w.getStaticChildren();
-				if (sc != null) for (Widget c : sc) if (c != null) queue.add(c);
-				Widget[] dc = w.getDynamicChildren();
-				if (dc != null) for (Widget c : dc) if (c != null) queue.add(c);
-				Widget[] nc = w.getNestedChildren();
-				if (nc != null) for (Widget c : nc) if (c != null) queue.add(c);
-			}
-			String tree = sb.toString();
-			if (!tree.equals(lastWidgetTree))
-			{
-				log.info("Widget tree changed:\n{}", tree);
-				lastWidgetTree = tree;
-			}
-		}
-
 		if (pendingCollectSlot < 0)
 		{
 			return;
@@ -311,7 +272,7 @@ public class GrandExchangePanelPlusPlugin extends Plugin implements MouseListene
 				{
 					if (actions[i] != null && actions[i].contains(actionName))
 					{
-						log.info("{}: slot {} invoking [{}]: {}", actionName, slot, i + 1, actions[i]);
+						log.debug("{}: slot {} invoking [{}]: {}", actionName, slot, i + 1, actions[i]);
 						client.menuAction(
 							child.getIndex(),
 							child.getId(),
@@ -325,7 +286,7 @@ public class GrandExchangePanelPlusPlugin extends Plugin implements MouseListene
 					}
 				}
 			}
-			log.info("{}: no matching action found on slot {}", actionName, slot);
+			log.debug("{}: no matching action found on slot {}", actionName, slot);
 		});
 
 	}

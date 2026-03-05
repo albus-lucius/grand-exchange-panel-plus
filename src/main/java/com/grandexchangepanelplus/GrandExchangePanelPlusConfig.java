@@ -100,16 +100,4 @@ public interface GrandExchangePanelPlusConfig extends Config
 	{
 		return true;
 	}
-
-	@ConfigItem(
-		keyName = "showDebug",
-		name = "Debug Overlays",
-		description = "Display debug borders, slot indices, widget info, and slot status labels",
-		hidden = true,
-		position = 99
-	)
-	default boolean showDebug()
-	{
-		return false;
-	}
 }

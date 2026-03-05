@@ -24,8 +24,6 @@ dependencies {
     testImplementation 'junit:junit:4.13.2'
     testImplementation group: 'net.runelite', name: 'client', version: runeLiteVersion
     testImplementation group: 'net.runelite', name: 'jshell', version: runeLiteVersion
-
-    testImplementation 'com.devtools:dev-tools:1.0.0'
 }
 
 group = 'com.grandexchangepanelplus'
