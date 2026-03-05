@@ -2,6 +2,8 @@ package com.grandexchangepanelplus;
 
 import java.awt.Rectangle;
 import java.awt.event.MouseEvent;
+import java.util.LinkedList;
+import java.util.Queue;
 import javax.inject.Inject;
 import com.google.inject.Provides;
 import lombok.extern.slf4j.Slf4j;
@@ -47,6 +49,8 @@ public class GrandExchangePanelPlusPlugin extends Plugin implements MouseListene
 
 	private int pendingCollectSlot = -1;
 	private int collectTicksWaited;
+	private String lastWidgetTree = "";
+	volatile boolean suppressButtons = false;
 
 	@Provides
 	GrandExchangePanelPlusConfig provideConfig(ConfigManager configManager)
@@ -74,103 +78,142 @@ public class GrandExchangePanelPlusPlugin extends Plugin implements MouseListene
 	@Override
 	public MouseEvent mousePressed(MouseEvent e)
 	{
-		if (!config.showSlotStatus())
-		{
-			return e;
-		}
-
 		for (int slot = 0; slot < 8; slot++)
 		{
-			Rectangle bounds = overlay.getProgressBarBound(slot);
-			if (bounds != null && bounds.contains(e.getPoint()))
+			if (config.collectEnable())
 			{
-				log.info("HIT slot {}, starting collect", slot);
-				pendingCollectSlot = slot;
-				collectTicksWaited = -1; // -1 = need to open slot first
-				e.consume();
-				return e;
+				Rectangle bounds = overlay.getProgressBarBound(slot);
+				if (bounds != null && bounds.contains(e.getPoint()))
+				{
+					suppressButtons = true;
+					openSlotForCollect(slot);
+					e.consume();
+					return e;
+				}
+			}
+
+			if (config.modifyEnable())
+			{
+				Rectangle modBounds = overlay.getModifyBound(slot);
+				if (modBounds != null && modBounds.contains(e.getPoint()))
+				{
+					suppressButtons = true;
+				invokeSlotAction(slot, "Modify");
+					e.consume();
+					return e;
+				}
+			}
+
+			if (config.abortEnable())
+			{
+				Rectangle abortBounds = overlay.getAbortBound(slot);
+				if (abortBounds != null && abortBounds.contains(e.getPoint()))
+				{
+					suppressButtons = true;
+				invokeSlotAction(slot, "Abort");
+					e.consume();
+					return e;
+				}
 			}
 		}
 		return e;
 	}
 
+	private void openSlotForCollect(int slot)
+	{
+		clientThread.invokeLater(() ->
+		{
+			Widget slotWidget = client.getWidget(GE_OFFERS_INTERFACE, GE_SLOT_FIRST_CHILD + slot);
+			if (slotWidget == null)
+			{
+				return;
+			}
+
+			Widget[] dynChildren = slotWidget.getDynamicChildren();
+			if (dynChildren == null)
+			{
+				return;
+			}
+
+			for (Widget c : dynChildren)
+			{
+				if (c == null) continue;
+				String[] ca = c.getActions();
+				if (ca == null) continue;
+				for (String action : ca)
+				{
+					if (action != null && action.contains("View offer"))
+					{
+						client.menuAction(
+							c.getIndex(),
+							c.getId(),
+							MenuAction.CC_OP,
+							1,
+							-1,
+							"View offer",
+							""
+						);
+						pendingCollectSlot = slot;
+						collectTicksWaited = 0;
+						return;
+					}
+				}
+			}
+		});
+	}
+
 	@Subscribe
 	public void onGameTick(GameTick tick)
 	{
+		// Log widget tree on change (only when GE is open)
+		if (config.showDebug() && client.getWidget(GE_OFFERS_INTERFACE, 0) != null)
+		{
+			StringBuilder sb = new StringBuilder();
+			Queue<Widget> queue = new LinkedList<>();
+			Widget[] roots = client.getWidgetRoots();
+			if (roots != null)
+			{
+				for (Widget r : roots) if (r != null) queue.add(r);
+			}
+			while (!queue.isEmpty())
+			{
+				Widget w = queue.poll();
+				if (w == null || w.isHidden()) continue;
+				int gid = w.getId() >> 16;
+				int cid = w.getId() & 0xFFFF;
+				String t = w.getText();
+				if (t != null && !t.isEmpty())
+				{
+					sb.append(gid).append(":").append(cid).append("[").append(t).append("] ");
+				}
+				Widget[] sc = w.getStaticChildren();
+				if (sc != null) for (Widget c : sc) if (c != null) queue.add(c);
+				Widget[] dc = w.getDynamicChildren();
+				if (dc != null) for (Widget c : dc) if (c != null) queue.add(c);
+				Widget[] nc = w.getNestedChildren();
+				if (nc != null) for (Widget c : nc) if (c != null) queue.add(c);
+			}
+			String tree = sb.toString();
+			if (!tree.equals(lastWidgetTree))
+			{
+				log.info("Widget tree changed:\n{}", tree);
+				lastWidgetTree = tree;
+			}
+		}
+
 		if (pendingCollectSlot < 0)
 		{
 			return;
 		}
 
-		int slot = pendingCollectSlot;
-
-		// First tick: dump slot widget info and open the slot detail view
-		if (collectTicksWaited == -1)
-		{
-			Widget slotWidget = client.getWidget(GE_OFFERS_INTERFACE, GE_SLOT_FIRST_CHILD + slot);
-			if (slotWidget == null)
-			{
-				log.info("Collect: slot widget null, aborting");
-				pendingCollectSlot = -1;
-				return;
-			}
-
-			// "View offer" is on a dynamic child of the slot widget
-			Widget[] dynChildren = slotWidget.getDynamicChildren();
-			Widget viewOfferChild = null;
-			if (dynChildren != null)
-			{
-				for (Widget c : dynChildren)
-				{
-					if (c == null) continue;
-					String[] ca = c.getActions();
-					if (ca != null)
-					{
-						for (int i = 0; i < ca.length; i++)
-						{
-							if (ca[i] != null && ca[i].contains("View offer"))
-							{
-								viewOfferChild = c;
-								log.info("Collect: found 'View offer' on dyn child index={} id={}", c.getIndex(), c.getId());
-								break;
-							}
-						}
-					}
-					if (viewOfferChild != null) break;
-				}
-			}
-
-			if (viewOfferChild == null)
-			{
-				log.info("Collect: no 'View offer' child found, aborting");
-				pendingCollectSlot = -1;
-				return;
-			}
-
-			log.info("Collect: opening slot {} detail view", slot);
-			client.menuAction(
-				viewOfferChild.getIndex(),
-				viewOfferChild.getId(),
-				MenuAction.CC_OP,
-				1,
-				-1,
-				"View offer",
-				""
-			);
-			collectTicksWaited = 0;
-			return;
-		}
-
 		collectTicksWaited++;
-		log.info("Collect: tick {}, checking detail view", collectTicksWaited);
 
 		// Wait for detail view collect area children to become visible
 		Widget collectArea = client.getWidget(GE_OFFERS_INTERFACE, GE_COLLECT_AREA);
 		if (collectArea == null)
 		{
-			if (collectTicksWaited >= 10)
+			if (collectTicksWaited >= 5)
 			{
-				log.info("Collect: gave up waiting for collect area");
 				pendingCollectSlot = -1;
 			}
 			return;
@@ -183,17 +226,15 @@ public class GrandExchangePanelPlusPlugin extends Plugin implements MouseListene
 
 		if (!anyVisible)
 		{
-			if (collectTicksWaited >= 10)
+			if (collectTicksWaited >= 5)
 			{
-				log.info("Collect: gave up, children never became visible");
 				goBack();
 				pendingCollectSlot = -1;
 			}
 			return;
 		}
 
-		// Collect items
-		log.info("Collect: detail view ready at tick {}", collectTicksWaited);
+		// Collect both item slots and go back immediately
 		for (int child = 2; child <= 3; child++)
 		{
 			Widget item = collectArea.getChild(child);
@@ -206,12 +247,10 @@ public class GrandExchangePanelPlusPlugin extends Plugin implements MouseListene
 			{
 				continue;
 			}
-			log.info("Collect: child {} actions: {}", child, java.util.Arrays.toString(actions));
 			for (int i = 0; i < actions.length; i++)
 			{
 				if (actions[i] != null && (actions[i].contains("Collect") || actions[i].equals("Bank")))
 				{
-					log.info("Collect: invoking child {} [{}]: {}", child, i + 1, actions[i]);
 					client.menuAction(
 						child,
 						item.getId(),
@@ -235,7 +274,6 @@ public class GrandExchangePanelPlusPlugin extends Plugin implements MouseListene
 		Widget backButton = client.getWidget(GE_OFFERS_INTERFACE, GE_BACK_BUTTON);
 		if (backButton != null)
 		{
-			log.info("Collect: going back to overview");
 			client.menuAction(
 				-1,
 				backButton.getId(),
@@ -246,6 +284,50 @@ public class GrandExchangePanelPlusPlugin extends Plugin implements MouseListene
 				""
 			);
 		}
+	}
+
+	private void invokeSlotAction(int slot, String actionName)
+	{
+		clientThread.invokeLater(() ->
+		{
+			Widget slotWidget = client.getWidget(GE_OFFERS_INTERFACE, GE_SLOT_FIRST_CHILD + slot);
+			if (slotWidget == null)
+			{
+				return;
+			}
+
+			Widget[] dynChildren = slotWidget.getDynamicChildren();
+			if (dynChildren == null)
+			{
+				return;
+			}
+
+			for (Widget child : dynChildren)
+			{
+				if (child == null) continue;
+				String[] actions = child.getActions();
+				if (actions == null) continue;
+				for (int i = 0; i < actions.length; i++)
+				{
+					if (actions[i] != null && actions[i].contains(actionName))
+					{
+						log.info("{}: slot {} invoking [{}]: {}", actionName, slot, i + 1, actions[i]);
+						client.menuAction(
+							child.getIndex(),
+							child.getId(),
+							MenuAction.CC_OP,
+							i + 1,
+							-1,
+							actions[i],
+							""
+						);
+						return;
+					}
+				}
+			}
+			log.info("{}: no matching action found on slot {}", actionName, slot);
+		});
+
 	}
 
 	@Override
